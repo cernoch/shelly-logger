@@ -1,3 +1,4 @@
+use crate::influx;
 use crate::plug;
 use serde::Deserialize;
 use std::time::Duration;
@@ -11,6 +12,8 @@ pub struct Config {
 
     /// Configurations of Shelly Plug (S) devices
     pub shelly_plugs: Vec<plug::Config>,
+
+    pub influxdb2: influx::Config,
 }
 
 impl Config {
@@ -25,7 +28,7 @@ impl Config {
     }
 
     /// Network connection timeout
-    pub fn timeout(&self) -> Duration {
+    pub fn network_timeout(&self) -> Duration {
         Duration::from_millis(self.network_timeout_ms)
     }
 }

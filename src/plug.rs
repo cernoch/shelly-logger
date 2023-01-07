@@ -1,7 +1,11 @@
+use crate::point::Datum;
+use crate::point::Measurement::*;
 use chrono::{NaiveDateTime, Timelike};
 use log::{debug, info, warn, error};
 use serde::Deserialize;
-use std::{time::Duration, thread::JoinHandle};
+use std::time::Duration;
+use std::thread::JoinHandle;
+use std::sync::mpsc::Sender;
 
 /// Configuration of 1 Shelly Plug (S) device
 #[derive(Deserialize, Debug, Clone)]
@@ -107,10 +111,12 @@ struct Meter {
 impl Meter {
 
     /// Create a new meter
-    pub fn new(shelly_plug_config: &Config, connection_timeout: Duration) -> Meter {
+    pub fn new(shelly_plug_config: &Config,
+        network_timeout: Duration) -> Meter
+    {
         Meter {
             config: shelly_plug_config.clone(),
-            timeout: connection_timeout,
+            timeout: network_timeout,
         }
     }
 
@@ -126,11 +132,11 @@ impl Meter {
             }
         };
 
-        let server_time = chrono::Local::now();
+        let time_measured = chrono::Utc::now();
         let device_local_time = message.local_device_time();
         debug!("{} reports local time {}, server local time is {}, offset is {}ms",
-            self.config.host, device_local_time, server_time.naive_local(),
-            (device_local_time - server_time.naive_local()).num_milliseconds(),
+            self.config.host, device_local_time, time_measured.naive_local(),
+            (device_local_time - time_measured.naive_local()).num_milliseconds(),
         );
 
         Ok(message)
@@ -143,7 +149,7 @@ impl Meter {
             Ok(http_response) => {
                 let message = self.parse_http_response(http_response)?;
 
-                info!("{} \
+                debug!("{} \
                         instant={:.2}W \
                         last_min={:.2}Wh \
                         since_reboot={:.1}Wh",
@@ -182,17 +188,50 @@ impl Meter {
 /// Measure the cumulative consumption over the last minute
 pub struct MinuteMeter;
 impl MinuteMeter {
-    pub fn spawn(config: &Config, timeout: Duration)
+
+    pub fn spawn(
+        shelly_plug_config: &Config,
+        network_timeout: Duration,
+        data_sender: Sender<Datum>)
     -> JoinHandle<Result<(),String>>
     {
-        let meter = Meter::new(config, timeout);
+        let meter = Meter::new(&shelly_plug_config, network_timeout);
         std::thread::spawn(move || {
             loop {
-                std::thread::sleep(match meter.measure() {
-                    Ok(measurement) => measurement.time_to_next_update(),
+                let sleep_duration = match meter.measure() {
+                    Ok(m) => {
+
+                        let d1 = Datum{
+                            measured_on: chrono::Utc::now(),
+                            measurement: last_minute_consumption_in_wh,
+                            device_name: meter.config.name.clone(),
+                            device_host: meter.config.host.clone(),
+                            value: m.last_minute_consumption_in_wh(),
+                        };
+
+                        let d2 = Datum{
+                            measured_on: chrono::Utc::now(),
+                            measurement: consumption_since_reboot_in_wh,
+                            device_name: meter.config.name.clone(),
+                            device_host: meter.config.host.clone(),
+                            value: m.consumption_since_reboot_in_wh(),
+                        };
+
+                        if data_sender.send(d1).is_err() || data_sender.send(d2).is_err() {
+                            debug!("channel to the DB thread closed, stopping");
+                            return Ok(());
+                        }
+
+                        // Sleep until the next minute
+                        m.time_to_next_update()
+                    },
                     Err(MeterError::Recoverable(sleep_time)) => sleep_time,
                     Err(MeterError::Unrecoverable(message)) => return Err(message),
-                });
+                };
+
+                debug!("meter thread is going to sleep for {}ms",
+                    sleep_duration.as_millis()); 
+                std::thread::sleep(sleep_duration);
             }
         })
     }
@@ -203,26 +242,46 @@ pub struct InstantaneousMeter;
 impl InstantaneousMeter {
 
     /// Spawn the metering thread and return its handle
-    pub fn spawn(config: &Config, timeout: Duration)
+    pub fn spawn(
+        shelly_plug_config: &Config,
+        network_timeout: Duration,
+        data_sender: Sender<Datum>)
     -> Option<JoinHandle<Result<(),String>>>
     {
-        config.instantaneous_meter_interval().map_or_else(
+        shelly_plug_config.instantaneous_meter_interval().map_or_else(
             || {
                 info!("{} will not measure instantaneous consumption \
                     (instantaneous_meter_interval_in_s < 0)",
-                    config.host);
+                    shelly_plug_config.host);
                 return None;
             },           
 
             |instantaneous_meter_interval| {
-                let meter = Meter::new(config, timeout);
+                let meter = Meter::new(&shelly_plug_config, network_timeout);
                 Some(std::thread::spawn(move || {
                     loop {
                         let sleep_duration = match meter.measure() {
-                            Ok(_measurement) => { 
+                            Ok(m) => { 
+                                let datum = Datum{
+                                    measured_on: chrono::Utc::now(),
+                                    measurement: instantaneous_consumption_in_w,
+                                    device_name: meter.config.name.clone(),
+                                    device_host: meter.config.host.clone(),
+                                    value: m.instantaneous_consumption_in_w(),
+                                };
+                            
+                                if data_sender.send(datum).is_err() {
+                                    debug!("channel to the DB thread closed, stopping");
+                                    return Ok(());
+                                }
+                            
+                                // sleep according to the config file
                                 instantaneous_meter_interval
                             },
+
+                            // error prescribes sleep duration
                             Err(MeterError::Recoverable(sleep_time)) => sleep_time,
+
                             Err(MeterError::Unrecoverable(message)) => return Err(message),
                         };
 

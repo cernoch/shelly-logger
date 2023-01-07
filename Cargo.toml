@@ -11,7 +11,11 @@ ureq = { version = "2", features = ["json", "charset"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1.0" }
 
-
 # Logging
 log = { version = "0.4", features = ["std", "serde"] }
 env_logger = { version = "0.10" }
+
+# Database connectors
+futures = "0.3"
+influxdb2 = { version = "0.3.5" }
+tokio = { version = "1", features = ["full"] }

@@ -1,10 +1,18 @@
 {
-    "network_timeout_ms": 300,
+    "network_timeout_ms": 10000,
     "shelly_plugs": [
         {
-            "name": "washing_machine",
-            "host": "pracka.shelly.karpaty",
+            "name": "[NAME_THAT_APPEARS_IN_THE_DB_UNDER_THE_NAME_TAG",
+            "host": "[IP_OR_HOST_NAME_OF_YOUR_SHELLY_PLUG]",
             "instantaneous_meter_interval_in_s": 5
         }
-    ]
+    ],
+    "influxdb2": {
+        "https": false,
+        "host": "localhost",
+        "port": 8086,
+        "token": "[YOUR_API_TOKEN_GOES_HERE]",
+        "org": "[ORGANIZATION_NAME]",
+        "bucket": "[BUCKET_NAME]"
+    }
 }
