@@ -1,0 +1,10 @@
+{
+    "network_timeout_ms": 300,
+    "shelly_plugs": [
+        {
+            "name": "washing_machine",
+            "host": "pracka.shelly.karpaty",
+            "instantaneous_meter_interval_in_s": 5
+        }
+    ]
+}
