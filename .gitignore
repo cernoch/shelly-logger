@@ -1,5 +1,5 @@
 # Build artifacts
-/target
+/app/target
 
 # IDE configuration
 /.vscode
